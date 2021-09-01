@@ -1,0 +1,39 @@
+pipelines:
+  tags:
+    dev-*:
+      - step:
+          name: push docker images
+          image: python:3.7.3
+          services:
+            - docker
+          caches:
+            - pip
+          script:
+            - pip3 install awscli
+            - apt update && apt install zip
+            - aws configure set aws_access_key_id "${AWS_ACCESS_KEY_ID}"
+            - aws configure set aws_secret_access_key "${AWS_SECRET_ACCESS_KEY}"
+            - export PROD_IMAGE_NAME="${AWS_ECR_REPO}:${BITBUCKET_TAG}"
+            - export ORM_USER="${BIT_ORM_USER}"
+            - export ORM_PASS="${BIT_ORM_PASS}"
+            - aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" | docker login --username AWS --password-stdin  "${AWS_ECR_REPO_AUTH}"
+            - cat ormconfig_base.json | sed "s|$ORM_USER_BASE|$ORM_USER|g" | sed "s|$ORM_PASS_BASE|$ORM_PASS|g" > ormconfig.json
+            - cat ormconfig.json
+            - docker build -t $PROD_IMAGE_NAME .
+            - docker push $PROD_IMAGE_NAME
+            - cat Dockerrun.aws | sed "s|$IMG_PLACEHOLDER|$PROD_IMAGE_NAME|g" > Dockerrun.aws.json
+            - zip aws-prod.zip Dockerrun.aws.json
+          artifacts:
+            - aws-prod.zip
+      - step:
+          name: deploy elastic beanstalk
+          script:
+            - pipe: atlassian/aws-elasticbeanstalk-deploy:0.6.6
+              variables:
+                AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+                AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+                AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
+                APPLICATION_NAME: $PROD_APP_NAME
+                ENVIRONMENT_NAME: $PROD_ENV_NAME
+                ZIP_FILE: "aws-prod.zip"
+                S3_BUCKET: $S3_BUCKET
